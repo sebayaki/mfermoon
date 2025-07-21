@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import mferMoonImage from "/mfermoon.png";
 import matchaIcon from "/matcha.svg";
 import uniswapIcon from "/uniswap.png";
@@ -7,7 +7,7 @@ import mintClubIcon from "/mintclub.svg";
 import { publicClient } from "./utils/rpc";
 import { MOON_ABI, MOON_ADDRESS } from "./abis/Moon";
 import { formatWei } from "./utils/common";
-import { type Address } from "viem";
+import { getAddress, type Address } from "viem";
 import "./App.css";
 import { sdk } from "@farcaster/frame-sdk";
 import { farcasterFrame as miniAppConnector } from "@farcaster/frame-wagmi-connector";
@@ -21,9 +21,6 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
-// Restricted to localhost, mfermoon.com
-const NEYNAR_API_KEY = import.meta.env.VITE_NEYNAR_API_KEY;
 
 const commonParams = {
   address: MOON_ADDRESS as Address,
@@ -41,8 +38,8 @@ interface FarcasterUser {
   // Add other properties you might need from the user context
 }
 
-// Define a type for Neynar User Profile data
-interface NeynarUserProfile {
+// Define a type for Farcaster User Profile data
+interface FarcasterUserProfile {
   username: string;
   displayName: string;
   pfpUrl: string;
@@ -59,7 +56,7 @@ type BurnHistory = {
   mferCollected: bigint;
   mferMoonBurned: bigint;
   caller: Address;
-  neynarUser?: NeynarUserProfile | null; // Added for Farcaster user data
+  farcasterUser?: FarcasterUserProfile | null; // Added for Farcaster user data
 };
 
 // Wagmi Config
@@ -84,6 +81,11 @@ function MoonAppContent() {
   const [farcasterUser, setFarcasterUser] = useState<FarcasterUser | null>(
     null
   );
+
+  // Cache for Farcaster user data to avoid duplicate API calls
+  const [farcasterUsersCache, setFarcasterUsersCache] = useState<
+    Map<Address, FarcasterUserProfile | null>
+  >(new Map());
 
   // Wagmi hooks
   const { address, isConnected, connector: activeConnector } = useAccount();
@@ -122,7 +124,7 @@ function MoonAppContent() {
     });
   };
 
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     const historyCount = (await publicClient.readContract({
       ...commonParams,
       functionName: "getHistoryCount", // Assuming this function exists
@@ -164,45 +166,73 @@ function MoonAppContent() {
     const uniqueCallers = Array.from(
       new Set(contractHistories.map((h) => h.caller.toLowerCase() as Address))
     );
-    const farcasterUsersMap = new Map<Address, NeynarUserProfile>();
+    const farcasterUsersMap = new Map<Address, FarcasterUserProfile>();
 
-    if (uniqueCallers.length > 0 && NEYNAR_API_KEY) {
+    if (uniqueCallers.length > 0) {
       try {
-        const addressesQueryParam = uniqueCallers.join(",");
-        const response = await fetch(
-          `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${addressesQueryParam}&api_key=${NEYNAR_API_KEY}`
-        );
+        // First, populate farcasterUsersMap with cached data
+        const addressesToFetch: Address[] = [];
 
-        if (!response.ok) {
-          console.error(
-            "Neynar API error:",
-            response.status,
-            await response.text()
-          );
-        } else {
-          const neynarData = await response.json();
-          for (const addressKey in neynarData) {
-            // Ensure the key is a valid address and exists in our uniqueCallers list
-            // and that data for this address is an array with at least one user profile
-            if (
-              Object.prototype.hasOwnProperty.call(neynarData, addressKey) &&
-              neynarData[addressKey] &&
-              neynarData[addressKey].length > 0
-            ) {
-              const userProfile = neynarData[addressKey][0]; // Take the first profile
-              if (userProfile.username && userProfile.pfp_url) {
-                farcasterUsersMap.set(addressKey as Address, {
-                  username: userProfile.username,
-                  pfpUrl: userProfile.pfp_url,
-                  displayName: userProfile.display_name,
-                });
-              }
+        uniqueCallers.forEach((address) => {
+          if (farcasterUsersCache.has(address)) {
+            const cachedProfile = farcasterUsersCache.get(address);
+            if (cachedProfile) {
+              farcasterUsersMap.set(address, cachedProfile);
             }
+          } else {
+            addressesToFetch.push(address);
           }
+        });
+
+        // Only fetch data for addresses not in cache
+        if (addressesToFetch.length > 0) {
+          const userDataPromises = addressesToFetch.map(async (address) => {
+            try {
+              const response = await fetch(
+                `https://fc.hunt.town/users/byWallet/${getAddress(address)}`
+              );
+
+              if (response.ok) {
+                const userData = await response.json();
+                if (userData.username && userData.pfpUrl) {
+                  return {
+                    address: address as Address,
+                    profile: {
+                      username: userData.username,
+                      pfpUrl: userData.pfpUrl,
+                      displayName: userData.displayName || userData.username,
+                    },
+                  };
+                }
+              } else if (response.status === 404) {
+                // Cache 404 responses to avoid retrying
+                console.log(
+                  `User not found for address ${address}, caching as null`
+                );
+              }
+              return { address: address as Address, profile: null };
+            } catch (error) {
+              console.warn(`Failed to fetch user data for ${address}:`, error);
+              return { address: address as Address, profile: null };
+            }
+          });
+
+          const userDataResults = await Promise.all(userDataPromises);
+
+          // Update cache and farcasterUsersMap with new results
+          const newCacheEntries = new Map(farcasterUsersCache);
+          userDataResults.forEach((result) => {
+            newCacheEntries.set(result.address, result.profile);
+            if (result.profile) {
+              farcasterUsersMap.set(result.address, result.profile);
+            }
+          });
+
+          setFarcasterUsersCache(newCacheEntries);
         }
       } catch (error) {
         console.error(
-          "Failed to fetch or process Farcaster user data from Neynar:",
+          "Failed to fetch or process Farcaster user data from fc.hunt.town:",
           error
         );
       }
@@ -210,12 +240,12 @@ function MoonAppContent() {
 
     const augmentedHistories: BurnHistory[] = contractHistories.map((h) => ({
       ...h,
-      neynarUser:
+      farcasterUser:
         farcasterUsersMap.get(h.caller.toLowerCase() as Address) || null,
     }));
 
     setHistory(augmentedHistories);
-  };
+  }, [farcasterUsersCache, setFarcasterUsersCache]);
 
   useEffect(() => {
     fetchStats();
@@ -478,19 +508,22 @@ function MoonAppContent() {
                 </div>
                 <div className="history-sub">
                   {new Date(h.timestamp * 1000).toLocaleString()} - by{" "}
-                  {h.neynarUser ? (
+                  {h.farcasterUser ? (
                     <>
                       <img
-                        src={h.neynarUser.pfpUrl}
-                        alt={h.neynarUser.displayName || h.neynarUser.username}
+                        src={h.farcasterUser.pfpUrl}
+                        alt={
+                          h.farcasterUser.displayName ||
+                          h.farcasterUser.username
+                        }
                         className="pfp-history-image"
                       />
                       <a
-                        href={`https://farcaster.xyz/${h.neynarUser.username}`}
+                        href={`https://farcaster.xyz/${h.farcasterUser.username}`}
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        @{h.neynarUser.username}
+                        @{h.farcasterUser.username}
                       </a>
                     </>
                   ) : (
