@@ -7,19 +7,19 @@
   "frame": {
     "version": "1",
     "name": "mfermoon 🌕",
-    "homeUrl": "https://mfermoon.com",
-    "iconUrl": "https://mfermoon.com/mfermoon-1024.png",
+    "homeUrl": "https://mfer.sebayaki.com",
+    "iconUrl": "https://mfer.sebayaki.com/mfermoon-1024.png",
     "buttonTitle": "🌕-'",
-    "splashImageUrl": "https://mfermoon.com/mfermoon-200x200.png",
+    "splashImageUrl": "https://mfer.sebayaki.com/mfermoon-200x200.png",
     "splashBackgroundColor": "#000000",
     "subtitle": "mfers are mooning together!",
     "description": "The Moon contract scoops up royalties from MFERMOON trades and burns ’em. Hit moon() to burn some and snag a one percent reward for yourself, fam!",
     "primaryCategory": "finance",
     "tags": ["mintclub", "burn", "earn", "reward", "mfer"],
-    "heroImageUrl": "https://mfermoon.com/og.png",
+    "heroImageUrl": "https://mfer.sebayaki.com/og.png",
     "tagline": "mfers are mooning together!",
     "ogTitle": "mfermoon",
     "ogDescription": "mfers are mooning together!",
-    "ogImageUrl": "https://mfermoon.com/og.png"
+    "ogImageUrl": "https://mfer.sebayaki.com/og.png"
   }
 }
